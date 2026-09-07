@@ -135,15 +135,35 @@ cluster.
 | Container image (uncompressed) | ~660 MB (JRE + fat jar) |
 | Startup time | ~38 s (JVM + Flyway) observed in-cluster |
 
-### Go backend (to be measured after cluster deploy)
+### Go backend (measured on GKE, 2026-09-07, chart image swap)
 
 | Metric | Value |
 |--------|-------|
-| Actual memory (idle) | _TBD_ |
-| Actual CPU (idle) | _TBD_ |
-| Container image | _TBD_ (expected: tens of MB with a distroless/static build) |
-| Startup time | _TBD_ (expected: sub-second) |
+| Actual memory (idle, `kubectl top`) | **~2 Mi** |
+| Actual CPU (idle) | ~1 m |
+| Container image (uncompressed, local build) | ~4.6 MB (distroless static) |
+| Startup time | **~1 s** (connect → migrate → listening within the same second) |
 
-Expectation to validate: the Go backend should use a small fraction of the
-JVM's memory (~tens of Mi vs ~258 Mi), a much smaller image, and near-instant
-startup. This informs whether the cluster could drop to `min: 1` autoscaling.
+### Result
+
+| Metric | Spring Boot | Go | Difference |
+|--------|-------------|----|-----------|
+| Memory (idle) | ~258 Mi | ~2 Mi | ~130× less |
+| Startup | ~38 s | ~1 s | ~38× faster |
+| Image (uncompressed) | ~660 MB | ~4.6 MB | ~140× smaller |
+
+Deployed via Option 1 (image swap in the existing Helm release): only
+`backend.image.repository/tag` were overridden — Service, Ingress, ConfigMap,
+Secret, PVC, Postgres, and frontend were untouched, because the Go app matches
+the same REST contract, env vars, port (8080), pod label (`app: backend`), and
+`/actuator/health` path.
+
+Caveat: the Go app does not (yet) expose a Prometheus metrics endpoint, so the
+`PodMonitoring` scrape of `/actuator/prometheus` returns 404 while Go is
+deployed. Add `prometheus/client_golang` for metric parity if desired.
+
+Rollback to Spring Boot:
+```bash
+helm upgrade todo oci://.../charts/todo -n todo --reset-then-reuse-values \
+  --set backend.image.repository=backend --set backend.image.tag=2609514 --wait
+```
