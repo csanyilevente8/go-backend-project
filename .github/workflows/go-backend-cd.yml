@@ -1,0 +1,66 @@
+name: Go Backend CD
+
+# Runs after "Go Backend CI" succeeds on main. Builds a linux/amd64 image and
+# pushes it to Artifact Registry (repo image: go-backend), tagged with the
+# commit SHA. Deploy is intentionally left as a follow-up (TODO) until the
+# deployment topology for the Go backend is decided (separate release/namespace
+# vs. swapping the image in the existing release) — see the go-backend README.
+on:
+  workflow_run:
+    workflows: ["Go Backend CI"]
+    types: [completed]
+    branches: [ main ]
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  PROJECT: project-f0ad4dfa-b194-4dc6-963
+  REGION: europe-central2
+  AR_REPO: kubecourse
+  IMAGE: go-backend
+  WIF_PROVIDER: projects/860228474942/locations/global/workloadIdentityPools/github-pool/providers/github-provider
+  DEPLOYER_SA: github-deployer@project-f0ad4dfa-b194-4dc6-963.iam.gserviceaccount.com
+
+jobs:
+  build-and-push:
+    name: Build and push image
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+
+    steps:
+      - name: Checkout the exact commit that passed CI
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Authenticate to Google Cloud (Workload Identity Federation)
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOYER_SA }}
+          token_format: access_token
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Log Docker in to Artifact Registry
+        run: |
+          echo "${{ steps.auth.outputs.access_token }}" \
+            | docker login -u oauth2accesstoken --password-stdin https://${REGION}-docker.pkg.dev
+
+      - name: Build and push image (linux/amd64, tagged with commit SHA)
+        run: |
+          SHA=$(git rev-parse --short HEAD)
+          IMG="${REGION}-docker.pkg.dev/${PROJECT}/${AR_REPO}/${IMAGE}:${SHA}"
+          echo "Building $IMG"
+          docker build --platform linux/amd64 -t "$IMG" .
+          docker push "$IMG"
+
+      # TODO (after deployment topology is decided):
+      #   - get GKE credentials (google-github-actions/get-gke-credentials@v2)
+      #   - helm registry login (access_token) and helm upgrade, e.g. deploy the
+      #     chart as a separate release/namespace with backend.image overridden,
+      #     OR swap the image in the existing release for A/B comparison.

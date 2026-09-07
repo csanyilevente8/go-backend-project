@@ -1,0 +1,6 @@
+# Ignore everything not needed in the Docker build context.
+.git/
+.github/
+README.md
+*.md
+tmp/
