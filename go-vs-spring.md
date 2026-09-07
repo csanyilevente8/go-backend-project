@@ -10,18 +10,19 @@ Measured on GKE cluster `kubecourse` (e2-medium nodes) on 2026-09-07.
 
 | Metric | Spring Boot | Go | Difference |
 |--------|-------------|-----|------------|
-| Memory (idle, `kubectl top`) | ~258 Mi | ~2 Mi | **~130× less** |
-| CPU (idle) | ~4 m | ~1 m | lower |
+| Memory (warm, `kubectl top`) | ~283 Mi | ~2–3 Mi | **~100× less** |
+| CPU (warm, idle) | ~6 m | ~1 m | lower |
 | Container image (uncompressed) | ~660 MB | ~4.6 MB | **~140× smaller** |
 | Startup time | ~38 s | ~1 s | **~38× faster** |
+| Full request cycle (avg, warm) | ~47.6 ms | ~15.6 ms | **~3× faster** |
 
 ## Detail
 
 ### Memory
-- **Spring Boot ~258 Mi**: JVM heap + metaspace + thread stacks + framework
-  object graph. Configured requests were `448Mi` / limits `768Mi` to be safe.
-- **Go ~2 Mi**: a statically-linked native binary; no VM, minimal runtime. Could
-  run comfortably with requests around `32–64Mi`.
+- **Spring Boot ~283 Mi** (warm): JVM heap + metaspace + thread stacks +
+  framework object graph. Configured requests were `448Mi` / limits `768Mi`.
+- **Go ~2–3 Mi**: a statically-linked native binary; no VM, minimal runtime.
+  Could run comfortably with requests around `32–64Mi`.
 
 ### Image size
 - **Spring Boot ~660 MB**: JRE base image + Spring/dependency fat jar.
@@ -73,16 +74,16 @@ frontend-7989b85d9f-v625m   1m           4Mi
 postgres-0                  1m           29Mi
 ```
 
-With **Spring Boot** backend (earlier baseline):
+With **Spring Boot** backend (warm):
 ```
 NAME                        CPU(cores)   MEMORY(bytes)
-backend-64bc8dc77f-mbdr4    4m           258Mi
+backend-86b9cd4f76-tc7fs    6m           283Mi
 frontend-...                1m           4Mi
-postgres-0                  1m           40Mi
+postgres-0                  1m           ~30Mi
 ```
 
-The backend pod went from **258Mi → 3Mi** memory. Frontend and postgres are
-unchanged (same tiers).
+The backend pod differs by **283Mi → 3Mi** memory between Spring and Go.
+Frontend and postgres are unchanged (same tiers).
 
 ### Nodes — `kubectl top nodes`
 
@@ -126,26 +127,35 @@ Times in milliseconds.
 | DELETE         | 100 | 3.1  | 3.8  | 3.6    | 4.6  | 15.4 |
 | **Full cycle** | 100 | 12.4 | 15.6 | 14.8   | 19.3 | 29.7 |
 
-### Spring Boot backend
+### Spring Boot backend (warm)
 
-_To be measured (same method) for comparison._
+| Operation      | n   | min  | avg  | median | p95  | max   |
+|----------------|-----|------|------|--------|------|-------|
+| CREATE (POST)  | 100 | 7.1  | 11.0 | 9.7    | 18.0 | 33.9  |
+| PATCH complete | 100 | 8.5  | 13.6 | 11.9   | 28.3 | 41.3  |
+| GET all        | 100 | 6.0  | 11.0 | 9.0    | 25.0 | 32.2  |
+| DELETE         | 100 | 7.3  | 12.0 | 10.0   | 23.0 | 48.1  |
+| **Full cycle** | 100 | 30.6 | 47.6 | 41.6   | 81.9 | 105.4 |
 
-| Operation      | n   | min | avg | median | p95 | max |
-|----------------|-----|-----|-----|--------|-----|-----|
-| CREATE (POST)  | 100 | TBD | TBD | TBD    | TBD | TBD |
-| PATCH complete | 100 | TBD | TBD | TBD    | TBD | TBD |
-| GET all        | 100 | TBD | TBD | TBD    | TBD | TBD |
-| DELETE         | 100 | TBD | TBD | TBD    | TBD | TBD |
-| **Full cycle** | 100 | TBD | TBD | TBD    | TBD | TBD |
+### Latency comparison
 
-Note: once warm, the JVM is typically competitive on steady-state request
-latency (the big Spring differences are footprint and cold-start, not
-per-request throughput). This benchmark will show whether that holds here.
+| | Spring Boot (avg) | Go (avg) | Ratio |
+|---|---|---|---|
+| CREATE | 11.0 ms | 4.1 ms | ~2.7× faster |
+| PATCH  | 13.6 ms | 4.9 ms | ~2.8× faster |
+| GET all| 11.0 ms | 2.8 ms | ~3.9× faster |
+| DELETE | 12.0 ms | 3.8 ms | ~3.2× faster |
+| Full cycle | 47.6 ms | 15.6 ms | ~3× faster |
+| Full cycle p95 | 81.9 ms | 19.3 ms | ~4.2× faster |
+
+Both were measured warm, in-cluster, same 100-cycle workload. Go was ~3× faster
+per request and had noticeably tighter tail latency (lower p95/max). Likely
+factors: Hibernate/JPA overhead per query vs. raw pgx, and JVM GC pauses showing
+up in Spring's higher p95/max. Contrary to the common "warm JVM is competitive"
+assumption, here Go led on steady-state latency as well as footprint.
 
 ## Follow-ups
 
 - Add `prometheus/client_golang` to Go for metric parity with the Spring backend.
-- Run the same 100-cycle benchmark against the Spring Boot backend and fill in
-  the table above.
 
 
