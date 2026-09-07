@@ -109,21 +109,7 @@ The Go backend's ~2 Mi footprint makes dropping the node pool to `min: 1`
 autoscaling feasible (the app tier is now tiny). It also frees headroom for
 future workloads (e.g. in-cluster Jenkins).
 
-## Deployment (Option 1 — image swap)
-
-```bash
-# to Go
-helm upgrade todo oci://europe-central2-docker.pkg.dev/PROJECT/kubecourse/charts/todo \
-  -n todo --reset-then-reuse-values \
-  --set backend.image.repository=go-backend --set backend.image.tag=<sha> --wait
-
-# back to Spring
-helm upgrade todo oci://.../charts/todo -n todo --reset-then-reuse-values \
-  --set backend.image.repository=backend --set backend.image.tag=2609514 --wait
-```
-
 ## Follow-ups
 
 - Add `prometheus/client_golang` to Go for metric parity with the Spring backend.
-- Re-measure image size from the registry (`gcloud artifacts docker images list`)
-  for the compressed on-registry size.
+
