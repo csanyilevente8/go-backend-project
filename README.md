@@ -5,6 +5,7 @@ REST contract** and connects to the **same PostgreSQL schema**, so the Angular
 frontend and the database tier require no changes — this backend is a drop-in
 alternative for experimentation and resource comparison.
 
+
 ## Why this exists
 
 To compare a Go implementation against the JVM/Spring Boot one on the same
