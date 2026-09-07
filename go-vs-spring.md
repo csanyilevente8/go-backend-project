@@ -14,7 +14,7 @@ Measured on GKE cluster `kubecourse` (e2-medium nodes) on 2026-09-07.
 | CPU (warm, idle) | ~6 m | ~1 m | lower |
 | Container image (uncompressed) | ~660 MB | ~4.6 MB | **~140× smaller** |
 | Startup time | ~38 s | ~1 s | **~38× faster** |
-| Full request cycle (avg, warm) | ~47.6 ms | ~15.6 ms | **~3× faster** |
+| Full request cycle (avg, both warm) | ~47.6 ms | ~12.7 ms | **~3.7× faster** |
 
 ## Detail
 
@@ -117,7 +117,7 @@ future workloads (e.g. in-cluster Jenkins).
 internet/DNS filter, so this measures API + DB latency, not network round-trip).
 Times in milliseconds.
 
-### Go backend
+### Go backend (cold — first traffic after start)
 
 | Operation      | n   | min  | avg  | median | p95  | max  |
 |----------------|-----|------|------|--------|------|------|
@@ -126,6 +126,23 @@ Times in milliseconds.
 | GET all        | 100 | 2.0  | 2.8  | 2.6    | 4.0  | 8.1  |
 | DELETE         | 100 | 3.1  | 3.8  | 3.6    | 4.6  | 15.4 |
 | **Full cycle** | 100 | 12.4 | 15.6 | 14.8   | 19.3 | 29.7 |
+
+### Go backend (warm — after a 100-cycle warm-up)
+
+| Operation      | n   | min  | avg  | median | p95  | max  |
+|----------------|-----|------|------|--------|------|------|
+| CREATE (POST)  | 100 | 2.9  | 3.4  | 3.3    | 4.0  | 7.9  |
+| PATCH complete | 100 | 3.3  | 3.9  | 3.9    | 4.6  | 5.2  |
+| GET all        | 100 | 1.8  | 2.3  | 2.2    | 2.7  | 3.8  |
+| DELETE         | 100 | 2.7  | 3.1  | 3.1    | 3.6  | 4.2  |
+| **Full cycle** | 100 | 11.5 | 12.7 | 12.5   | 13.9 | 18.2 |
+
+Warm-up effect: ~19% lower average and much tighter tails (p95 −28%, max −39%).
+Note this is **not** JVM-style JIT warm-up — Go is natively compiled. The gain
+comes from second-order effects: the pgx connection pool filling (reused
+connections), Postgres query-plan/buffer cache warming, and OS/network cache.
+The main benefit is fewer slow outliers.
+
 
 ### Spring Boot backend (warm)
 
@@ -137,20 +154,21 @@ Times in milliseconds.
 | DELETE         | 100 | 7.3  | 12.0 | 10.0   | 23.0 | 48.1  |
 | **Full cycle** | 100 | 30.6 | 47.6 | 41.6   | 81.9 | 105.4 |
 
-### Latency comparison
+### Latency comparison (both warm)
 
 | | Spring Boot (avg) | Go (avg) | Ratio |
 |---|---|---|---|
-| CREATE | 11.0 ms | 4.1 ms | ~2.7× faster |
-| PATCH  | 13.6 ms | 4.9 ms | ~2.8× faster |
-| GET all| 11.0 ms | 2.8 ms | ~3.9× faster |
-| DELETE | 12.0 ms | 3.8 ms | ~3.2× faster |
-| Full cycle | 47.6 ms | 15.6 ms | ~3× faster |
-| Full cycle p95 | 81.9 ms | 19.3 ms | ~4.2× faster |
+| CREATE | 11.0 ms | 3.4 ms | ~3.2× faster |
+| PATCH  | 13.6 ms | 3.9 ms | ~3.5× faster |
+| GET all| 11.0 ms | 2.3 ms | ~4.8× faster |
+| DELETE | 12.0 ms | 3.1 ms | ~3.9× faster |
+| Full cycle | 47.6 ms | 12.7 ms | ~3.7× faster |
+| Full cycle p95 | 81.9 ms | 13.9 ms | ~5.9× faster |
 
-Both were measured warm, in-cluster, same 100-cycle workload. Go was ~3× faster
-per request and had noticeably tighter tail latency (lower p95/max). Likely
-factors: Hibernate/JPA overhead per query vs. raw pgx, and JVM GC pauses showing
+Both measured **warm**, in-cluster, same 100-cycle workload — the fairest
+comparison. Go was ~3.7× faster per cycle and had far tighter tail latency
+(p95 ~5.9× better). Likely factors: Hibernate/JPA overhead per query vs. raw
+pgx, and JVM GC pauses showing
 up in Spring's higher p95/max. Contrary to the common "warm JVM is competitive"
 assumption, here Go led on steady-state latency as well as footprint.
 
