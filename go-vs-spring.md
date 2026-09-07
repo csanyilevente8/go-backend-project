@@ -61,7 +61,49 @@ Identical from the client's perspective:
 | Startup/footprint | heavier | very light |
 | Team familiarity | (project default) | learning exercise |
 
-## Implication for the cluster
+## Live `kubectl top` output
+
+### Pods — `kubectl top pods -n todo`
+
+With **Go** backend deployed:
+```
+NAME                        CPU(cores)   MEMORY(bytes)
+backend-6947c56bff-kw86j    1m           3Mi
+frontend-7989b85d9f-v625m   1m           4Mi
+postgres-0                  1m           29Mi
+```
+
+With **Spring Boot** backend (earlier baseline):
+```
+NAME                        CPU(cores)   MEMORY(bytes)
+backend-64bc8dc77f-mbdr4    4m           258Mi
+frontend-...                1m           4Mi
+postgres-0                  1m           40Mi
+```
+
+The backend pod went from **258Mi → 3Mi** memory. Frontend and postgres are
+unchanged (same tiers).
+
+### Nodes — `kubectl top nodes`
+
+After the swap to Go (backend node freed ~250Mi):
+```
+NAME                                       CPU    CPU%   MEMORY    MEM%
+gke-kubecourse-medium-pool-...-i656        120m   12%    1352Mi    48%
+gke-kubecourse-medium-pool-...-zpbf        122m   12%    1258Mi    44%
+```
+
+Before (Spring Boot on the same node was ~54% memory). The node hosting the
+backend dropped roughly **54% → 44%** memory — directly visible as the JVM's
+~250Mi being released. CPU is negligible for both at idle (~1–4m).
+
+### Takeaway
+
+At idle the entire app tier (Go backend + frontend + postgres) now uses well
+under ~40Mi combined. This is the concrete argument for a `min: 1` autoscaling
+floor and leaves ample room for additional workloads.
+
+
 
 The Go backend's ~2 Mi footprint makes dropping the node pool to `min: 1`
 autoscaling feasible (the app tier is now tiny). It also frees headroom for
