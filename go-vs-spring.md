@@ -109,7 +109,43 @@ The Go backend's ~2 Mi footprint makes dropping the node pool to `min: 1`
 autoscaling feasible (the app tier is now tiny). It also frees headroom for
 future workloads (e.g. in-cluster Jenkins).
 
+## API latency benchmark
+
+100 cycles of **create → mark complete → get all → delete**, run from a pod
+**inside the cluster** hitting the `backend` Service directly (bypasses the
+internet/DNS filter, so this measures API + DB latency, not network round-trip).
+Times in milliseconds.
+
+### Go backend
+
+| Operation      | n   | min  | avg  | median | p95  | max  |
+|----------------|-----|------|------|--------|------|------|
+| CREATE (POST)  | 100 | 2.9  | 4.1  | 3.8    | 5.3  | 13.0 |
+| PATCH complete | 100 | 3.8  | 4.9  | 4.7    | 6.6  | 9.2  |
+| GET all        | 100 | 2.0  | 2.8  | 2.6    | 4.0  | 8.1  |
+| DELETE         | 100 | 3.1  | 3.8  | 3.6    | 4.6  | 15.4 |
+| **Full cycle** | 100 | 12.4 | 15.6 | 14.8   | 19.3 | 29.7 |
+
+### Spring Boot backend
+
+_To be measured (same method) for comparison._
+
+| Operation      | n   | min | avg | median | p95 | max |
+|----------------|-----|-----|-----|--------|-----|-----|
+| CREATE (POST)  | 100 | TBD | TBD | TBD    | TBD | TBD |
+| PATCH complete | 100 | TBD | TBD | TBD    | TBD | TBD |
+| GET all        | 100 | TBD | TBD | TBD    | TBD | TBD |
+| DELETE         | 100 | TBD | TBD | TBD    | TBD | TBD |
+| **Full cycle** | 100 | TBD | TBD | TBD    | TBD | TBD |
+
+Note: once warm, the JVM is typically competitive on steady-state request
+latency (the big Spring differences are footprint and cold-start, not
+per-request throughput). This benchmark will show whether that holds here.
+
 ## Follow-ups
 
 - Add `prometheus/client_golang` to Go for metric parity with the Spring backend.
+- Run the same 100-cycle benchmark against the Spring Boot backend and fill in
+  the table above.
+
 
