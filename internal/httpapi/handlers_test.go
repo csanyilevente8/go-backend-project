@@ -48,7 +48,7 @@ func sample(id uuid.UUID, title string, completed bool) model.Todo {
 }
 
 func newServer(store TodoStore) http.Handler {
-	return NewRouter(NewTodoHandler(store, nil, nil))
+	return NewRouter(NewTodoHandler(store, nil, nil, nil))
 }
 
 func do(t *testing.T, srv http.Handler, method, path, body string) *httptest.ResponseRecorder {

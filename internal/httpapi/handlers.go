@@ -32,20 +32,29 @@ type ActivityStore interface {
 	FindRecent(ctx context.Context, limit int) ([]model.Activity, error)
 }
 
+// NotificationStore is the read side used by the /api/notifications endpoints.
+// It is fed by the "notifier" consumer group (fan-out, independent of activity).
+type NotificationStore interface {
+	FindRecent(ctx context.Context, limit int) ([]model.Notification, error)
+	CountUnread(ctx context.Context) (int, error)
+	MarkAllRead(ctx context.Context) (int64, error)
+}
+
 // TodoHandler holds the HTTP handlers for the todo API. Business/validation
 // logic lives here; the repository handles persistence. After a successful DB
 // mutation it publishes a domain event (fire-and-forget) via the publisher.
 type TodoHandler struct {
-	repo      TodoStore
-	activity  ActivityStore
-	publisher events.Publisher
+	repo          TodoStore
+	activity      ActivityStore
+	notifications NotificationStore
+	publisher     events.Publisher
 }
 
-func NewTodoHandler(repo TodoStore, activity ActivityStore, publisher events.Publisher) *TodoHandler {
+func NewTodoHandler(repo TodoStore, activity ActivityStore, notifications NotificationStore, publisher events.Publisher) *TodoHandler {
 	if publisher == nil {
 		publisher = events.NoopPublisher{}
 	}
-	return &TodoHandler{repo: repo, activity: activity, publisher: publisher}
+	return &TodoHandler{repo: repo, activity: activity, notifications: notifications, publisher: publisher}
 }
 
 // emit publishes a todo event. Best-effort: never affects the response.
@@ -300,6 +309,73 @@ func (h *TodoHandler) GetActivity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, items)
+}
+
+// GetNotifications godoc
+//
+//	@Summary	Recent notifications (from the Kafka "notifier" consumer group)
+//	@Tags		notifications
+//	@Produce	json
+//	@Param		limit	query	int	false	"Max entries (default 100)"
+//	@Success	200	{array}	model.Notification
+//	@Router		/api/notifications [get]
+func (h *TodoHandler) GetNotifications(w http.ResponseWriter, r *http.Request) {
+	if h.notifications == nil {
+		writeJSON(w, http.StatusOK, []model.Notification{})
+		return
+	}
+	limit := 100
+	if q := r.URL.Query().Get("limit"); q != "" {
+		if n, err := strconv.Atoi(q); err == nil {
+			limit = n
+		}
+	}
+	items, err := h.notifications.FindRecent(r.Context(), limit)
+	if err != nil {
+		serverError(w)
+		return
+	}
+	writeJSON(w, http.StatusOK, items)
+}
+
+// GetUnreadCount godoc
+//
+//	@Summary	Number of unread notifications (for the UI bell badge)
+//	@Tags		notifications
+//	@Produce	json
+//	@Success	200	{object}	map[string]int
+//	@Router		/api/notifications/unread-count [get]
+func (h *TodoHandler) GetUnreadCount(w http.ResponseWriter, r *http.Request) {
+	if h.notifications == nil {
+		writeJSON(w, http.StatusOK, map[string]int{"count": 0})
+		return
+	}
+	n, err := h.notifications.CountUnread(r.Context())
+	if err != nil {
+		serverError(w)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]int{"count": n})
+}
+
+// MarkNotificationsRead godoc
+//
+//	@Summary	Mark all notifications as read
+//	@Tags		notifications
+//	@Produce	json
+//	@Success	200	{object}	map[string]int64
+//	@Router		/api/notifications/read [post]
+func (h *TodoHandler) MarkNotificationsRead(w http.ResponseWriter, r *http.Request) {
+	if h.notifications == nil {
+		writeJSON(w, http.StatusOK, map[string]int64{"updated": 0})
+		return
+	}
+	n, err := h.notifications.MarkAllRead(r.Context())
+	if err != nil {
+		serverError(w)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]int64{"updated": n})
 }
 
 // --- shared error paths ----------------------------------------------------

@@ -45,10 +45,11 @@ func main() {
 
 	repo := repository.NewTodoRepository(pool)
 	activityRepo := repository.NewActivityRepository(pool)
+	notificationRepo := repository.NewNotificationRepository(pool)
 
 	// Kafka is optional: if KAFKA_BROKERS is set, publish domain events and run
-	// the activity consumer; otherwise use a no-op publisher so the app runs
-	// unchanged without Kafka.
+	// the consumers; otherwise use a no-op publisher so the app runs unchanged
+	// without Kafka.
 	var publisher events.Publisher = events.NoopPublisher{}
 	brokersEnv := os.Getenv("KAFKA_BROKERS")
 	if brokersEnv != "" {
@@ -56,15 +57,22 @@ func main() {
 		publisher = events.NewKafkaPublisher(brokers)
 		log.Printf("kafka enabled, brokers=%s", brokersEnv)
 
+		// UC1: activity-logger consumer group -> activity_log.
 		consumer := events.NewConsumer(brokers, activityRepo)
 		go consumer.Run(ctx)
 		defer consumer.Close()
+
+		// UC2: notifier consumer group -> notifications (independent fan-out on
+		// the same topic).
+		notifier := events.NewNotificationConsumer(brokers, notificationRepo)
+		go notifier.Run(ctx)
+		defer notifier.Close()
 	} else {
 		log.Println("KAFKA_BROKERS not set; events disabled")
 	}
 	defer publisher.Close()
 
-	handler := httpapi.NewTodoHandler(repo, activityRepo, publisher)
+	handler := httpapi.NewTodoHandler(repo, activityRepo, notificationRepo, publisher)
 	router := httpapi.NewRouter(handler)
 
 	port := os.Getenv("SERVER_PORT")

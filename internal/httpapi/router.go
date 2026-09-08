@@ -22,6 +22,12 @@ func NewRouter(h *TodoHandler) http.Handler {
 	// Activity feed (populated by the Kafka consumer).
 	mux.HandleFunc("GET /api/activity", h.GetActivity)
 
+	// Notifications (populated by the independent "notifier" consumer group;
+	// UC2 fan-out — same topic as activity, separate offsets).
+	mux.HandleFunc("GET /api/notifications", h.GetNotifications)
+	mux.HandleFunc("GET /api/notifications/unread-count", h.GetUnreadCount)
+	mux.HandleFunc("POST /api/notifications/read", h.MarkNotificationsRead)
+
 	// Health endpoint kept at the same path so the K8s probes and Ingress
 	// are unchanged.
 	mux.HandleFunc("GET /actuator/health", func(w http.ResponseWriter, r *http.Request) {
