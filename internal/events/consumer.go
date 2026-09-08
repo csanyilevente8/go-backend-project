@@ -24,6 +24,10 @@ func NewConsumer(brokers []string, activity *repository.ActivityRepository) *Con
 			Brokers: brokers,
 			Topic:   Topic,
 			GroupID: "activity-logger",
+			// New consumer group starts from the beginning of the topic so it
+			// captures existing events (kafka-go otherwise starts at the end for
+			// a group with no committed offset).
+			StartOffset: kafka.FirstOffset,
 		}),
 		activity: activity,
 	}
