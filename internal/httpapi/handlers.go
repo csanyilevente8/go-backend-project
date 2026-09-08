@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/csanyilevente8/go-backend-project/internal/events"
 	"github.com/csanyilevente8/go-backend-project/internal/model"
 	"github.com/csanyilevente8/go-backend-project/internal/repository"
 )
@@ -25,14 +27,36 @@ type TodoStore interface {
 	Delete(ctx context.Context, id uuid.UUID) error
 }
 
-// TodoHandler holds the HTTP handlers for the todo API. Business/validation
-// logic lives here; the repository handles persistence.
-type TodoHandler struct {
-	repo TodoStore
+// ActivityStore is the read side used by GET /api/activity.
+type ActivityStore interface {
+	FindRecent(ctx context.Context, limit int) ([]model.Activity, error)
 }
 
-func NewTodoHandler(repo TodoStore) *TodoHandler {
-	return &TodoHandler{repo: repo}
+// TodoHandler holds the HTTP handlers for the todo API. Business/validation
+// logic lives here; the repository handles persistence. After a successful DB
+// mutation it publishes a domain event (fire-and-forget) via the publisher.
+type TodoHandler struct {
+	repo      TodoStore
+	activity  ActivityStore
+	publisher events.Publisher
+}
+
+func NewTodoHandler(repo TodoStore, activity ActivityStore, publisher events.Publisher) *TodoHandler {
+	if publisher == nil {
+		publisher = events.NoopPublisher{}
+	}
+	return &TodoHandler{repo: repo, activity: activity, publisher: publisher}
+}
+
+// emit publishes a todo event. Best-effort: never affects the response.
+func (h *TodoHandler) emit(ctx context.Context, typ string, t model.Todo) {
+	h.publisher.Publish(ctx, events.TodoEvent{
+		Type:      typ,
+		TodoID:    t.ID,
+		Title:     t.Title,
+		Completed: t.Completed,
+		Timestamp: time.Now().UTC(),
+	})
 }
 
 // --- helpers ---------------------------------------------------------------
@@ -140,6 +164,7 @@ func (h *TodoHandler) Create(w http.ResponseWriter, r *http.Request) {
 		serverError(w)
 		return
 	}
+	h.emit(r.Context(), events.TypeCreated, todo)
 	w.Header().Set("Location", "/api/todos/"+todo.ID.String())
 	writeJSON(w, http.StatusCreated, todo)
 }
@@ -178,6 +203,7 @@ func (h *TodoHandler) Update(w http.ResponseWriter, r *http.Request) {
 		serverError(w)
 		return
 	}
+	h.emit(r.Context(), events.TypeUpdated, todo)
 	writeJSON(w, http.StatusOK, todo)
 }
 
@@ -216,6 +242,7 @@ func (h *TodoHandler) UpdateCompletion(w http.ResponseWriter, r *http.Request) {
 		serverError(w)
 		return
 	}
+	h.emit(r.Context(), events.TypeCompleted, todo)
 	writeJSON(w, http.StatusOK, todo)
 }
 
@@ -232,6 +259,8 @@ func (h *TodoHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Fetch first so the event can carry the title (best-effort).
+	existing, _ := h.repo.FindByID(r.Context(), id)
 	err := h.repo.Delete(r.Context(), id)
 	if errors.Is(err, repository.ErrNotFound) {
 		notFound(w, id)
@@ -241,7 +270,36 @@ func (h *TodoHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		serverError(w)
 		return
 	}
+	existing.ID = id
+	h.emit(r.Context(), events.TypeDeleted, existing)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// GetActivity godoc
+//
+//	@Summary	Recent activity (from the Kafka-fed activity log)
+//	@Tags		activity
+//	@Produce	json
+//	@Param		limit	query	int	false	"Max entries (default 100)"
+//	@Success	200	{array}	model.Activity
+//	@Router		/api/activity [get]
+func (h *TodoHandler) GetActivity(w http.ResponseWriter, r *http.Request) {
+	if h.activity == nil {
+		writeJSON(w, http.StatusOK, []model.Activity{})
+		return
+	}
+	limit := 100
+	if q := r.URL.Query().Get("limit"); q != "" {
+		if n, err := strconv.Atoi(q); err == nil {
+			limit = n
+		}
+	}
+	items, err := h.activity.FindRecent(r.Context(), limit)
+	if err != nil {
+		serverError(w)
+		return
+	}
+	writeJSON(w, http.StatusOK, items)
 }
 
 // --- shared error paths ----------------------------------------------------
