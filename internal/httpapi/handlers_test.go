@@ -48,7 +48,7 @@ func sample(id uuid.UUID, title string, completed bool) model.Todo {
 }
 
 func newServer(store TodoStore) http.Handler {
-	return NewRouter(NewTodoHandler(store))
+	return NewRouter(NewTodoHandler(store, nil, nil))
 }
 
 func do(t *testing.T, srv http.Handler, method, path, body string) *httptest.ResponseRecorder {
@@ -167,7 +167,10 @@ func TestUpdateCompletion_Returns200(t *testing.T) {
 }
 
 func TestDelete_Returns204(t *testing.T) {
-	store := &fakeStore{del: func(ctx context.Context, id uuid.UUID) error { return nil }}
+	store := &fakeStore{
+		findByID: func(ctx context.Context, id uuid.UUID) (model.Todo, error) { return sample(id, "x", false), nil },
+		del:      func(ctx context.Context, id uuid.UUID) error { return nil },
+	}
 	w := do(t, newServer(store), http.MethodDelete, "/api/todos/"+uuid.New().String(), "")
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("want 204, got %d", w.Code)
@@ -175,7 +178,10 @@ func TestDelete_Returns204(t *testing.T) {
 }
 
 func TestDelete_NotFound_Returns404(t *testing.T) {
-	store := &fakeStore{del: func(ctx context.Context, id uuid.UUID) error { return repository.ErrNotFound }}
+	store := &fakeStore{
+		findByID: func(ctx context.Context, id uuid.UUID) (model.Todo, error) { return model.Todo{}, repository.ErrNotFound },
+		del:      func(ctx context.Context, id uuid.UUID) error { return repository.ErrNotFound },
+	}
 	w := do(t, newServer(store), http.MethodDelete, "/api/todos/"+uuid.New().String(), "")
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("want 404, got %d", w.Code)

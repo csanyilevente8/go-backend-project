@@ -19,6 +19,9 @@ func NewRouter(h *TodoHandler) http.Handler {
 	mux.HandleFunc("PATCH /api/todos/{id}/complete", h.UpdateCompletion)
 	mux.HandleFunc("DELETE /api/todos/{id}", h.Delete)
 
+	// Activity feed (populated by the Kafka consumer).
+	mux.HandleFunc("GET /api/activity", h.GetActivity)
+
 	// Health endpoint kept at the same path so the K8s probes and Ingress
 	// are unchanged.
 	mux.HandleFunc("GET /actuator/health", func(w http.ResponseWriter, r *http.Request) {

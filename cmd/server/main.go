@@ -18,10 +18,12 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/csanyilevente8/go-backend-project/internal/db"
+	"github.com/csanyilevente8/go-backend-project/internal/events"
 	"github.com/csanyilevente8/go-backend-project/internal/httpapi"
 	"github.com/csanyilevente8/go-backend-project/internal/repository"
 )
@@ -42,7 +44,27 @@ func main() {
 	log.Println("migrations applied")
 
 	repo := repository.NewTodoRepository(pool)
-	handler := httpapi.NewTodoHandler(repo)
+	activityRepo := repository.NewActivityRepository(pool)
+
+	// Kafka is optional: if KAFKA_BROKERS is set, publish domain events and run
+	// the activity consumer; otherwise use a no-op publisher so the app runs
+	// unchanged without Kafka.
+	var publisher events.Publisher = events.NoopPublisher{}
+	brokersEnv := os.Getenv("KAFKA_BROKERS")
+	if brokersEnv != "" {
+		brokers := strings.Split(brokersEnv, ",")
+		publisher = events.NewKafkaPublisher(brokers)
+		log.Printf("kafka enabled, brokers=%s", brokersEnv)
+
+		consumer := events.NewConsumer(brokers, activityRepo)
+		go consumer.Run(ctx)
+		defer consumer.Close()
+	} else {
+		log.Println("KAFKA_BROKERS not set; events disabled")
+	}
+	defer publisher.Close()
+
+	handler := httpapi.NewTodoHandler(repo, activityRepo, publisher)
 	router := httpapi.NewRouter(handler)
 
 	port := os.Getenv("SERVER_PORT")
